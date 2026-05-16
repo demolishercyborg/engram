@@ -60,7 +60,8 @@ class NemotronClient:
 
     def _build_prompt(self, messages: list[dict], tools: list[dict] | None) -> str:
         # Try the tokenizer's built-in chat template with tool support first.
-        # Nemotron-Nano-9B-v2 is Qwen-2.5-based and supports this natively.
+        # Nemotron-Nano-9B-v2 is a Mamba-Transformer hybrid (Nemotron-H);
+        # tool calling via apply_chat_template works if the tokenizer config supports it.
         try:
             if tools:
                 return self.tokenizer.apply_chat_template(
