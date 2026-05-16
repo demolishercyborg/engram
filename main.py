@@ -22,7 +22,7 @@ from viz.memory_viz import MemoryViz
 
 
 # ── config ────────────────────────────────────────────────────────────────────
-NEMOTRON_REPO = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
+NEMOTRON_REPO = "Qwen/Qwen3.6-27B-FP8"
 MAX_TOKENS    = 2048
 
 

@@ -23,10 +23,10 @@ class NemotronClient:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        print("[Nemotron] Loading model (bfloat16, device_map=auto) ...")
+        print("[Nemotron] Loading model (dtype=auto, device_map=auto) ...")
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
+            dtype="auto",
             device_map="auto",
             trust_remote_code=True,
         )

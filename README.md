@@ -93,7 +93,8 @@ engram/
 ### 1. Install dependencies
 
 ```bash
-pip install torch transformers accelerate huggingface_hub sentence-transformers numpy rich
+pip3 install ninja packaging
+pip3 install -r requirements.txt --no-build-isolation
 ```
 
 ### 2. Run
