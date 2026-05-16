@@ -1,3 +1,6 @@
+torch
+transformers>=4.40.0
+accelerate
+huggingface_hub
 sentence-transformers
 numpy
-requests

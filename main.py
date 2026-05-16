@@ -1,32 +1,31 @@
 """
-Engram — local LLM with scored tiered memory
----------------------------------------------
+Engram — local LLM with scored tiered memory, powered by Nemotron-Nano-9B-v2
+-----------------------------------------------------------------------------
 Usage:
     python main.py              # interactive chat
     python main.py --eval       # run built-in eval suite then chat
-    python main.py --model qwen2.5:32b   # specify model
+    python main.py --budget 512 --eval
 """
 
 import os
 import sys
 import argparse
 
-sys.path.insert(0, os.path.dirname(__file__))
-os.makedirs("db", exist_ok=True)
+# ensure repo root is on the path so all subpackages resolve
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from huggingface_hub import snapshot_download
 from core.agent import EngramAgent
 from eval.evaluator import Evaluator
-from llm.ollama_client import make_llm_fn
+from llm.nemotron_client import make_llm_fn
 
 
 # ── config ────────────────────────────────────────────────────────────────────
-DEFAULT_MODEL  = "llama3.2"     # change to your ollama model
-MAX_TOKENS     = 2048           # working memory budget (lower = more aggressive eviction)
+NEMOTRON_REPO = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
+MAX_TOKENS    = 2048
 
 
-# ── built-in eval probes ──────────────────────────────────────────────────────
-#   These are injected early in the conversation, then probed after many turns
-#   to test whether Engram correctly recalls evicted information.
+# ── eval data ─────────────────────────────────────────────────────────────────
 SEED_FACTS = [
     ("user",      "My name is Alex and I am a backend engineer at Stripe."),
     ("assistant", "Nice to meet you Alex!"),
@@ -48,17 +47,17 @@ SEED_FACTS = [
 ]
 
 EVAL_PROBES = [
-    {"question": "What is my name?",                        "keyword": "Alex"},
-    {"question": "Where do I work?",                        "keyword": "Stripe"},
-    {"question": "What programming languages do I use?",    "keyword": "Go"},
-    {"question": "What bug am I dealing with?",             "keyword": "webhook"},
-    {"question": "What is my dog's name?",                  "keyword": "Biscuit"},
+    {"question": "What is my name?",                     "keyword": "Alex"},
+    {"question": "Where do I work?",                     "keyword": "Stripe"},
+    {"question": "What programming languages do I use?", "keyword": "Go"},
+    {"question": "What bug am I dealing with?",          "keyword": "webhook"},
+    {"question": "What is my dog's name?",               "keyword": "Biscuit"},
 ]
 
 
 def run_chat(agent: EngramAgent, llm_fn):
     print(f"\n{'='*60}")
-    print("  Engram — tiered memory LLM")
+    print("  Engram — tiered memory LLM (Nemotron-Nano-9B-v2)")
     print(f"  Budget: {agent.working.max_tokens} tokens | type 'status' or 'quit'")
     print(f"{'='*60}\n")
 
@@ -86,7 +85,6 @@ def run_eval(agent: EngramAgent, llm_fn):
     print("\n[Eval] Seeding facts into memory...")
     for role, content in SEED_FACTS:
         agent.working.add(role, content)
-        # trigger eviction manually since we're bypassing agent.chat
         qv = agent.embedder.embed(content)
         while agent.working.is_over_budget():
             ev = agent.working.evict_one(qv)
@@ -99,18 +97,23 @@ def run_eval(agent: EngramAgent, llm_fn):
     print("[Eval] Running probes...\n")
 
     evaluator = Evaluator(agent)
-    report = evaluator.run_probe_set(EVAL_PROBES, llm_fn)
+    report    = evaluator.run_probe_set(EVAL_PROBES, llm_fn)
     report.print()
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model",  default=DEFAULT_MODEL, help="Ollama model name")
-    parser.add_argument("--budget", type=int, default=MAX_TOKENS, help="Working memory token budget")
-    parser.add_argument("--eval",   action="store_true", help="Run eval suite before chat")
+    parser.add_argument("--budget", type=int, default=MAX_TOKENS,
+                        help="Working memory token budget")
+    parser.add_argument("--eval",   action="store_true",
+                        help="Run eval suite before chat")
     args = parser.parse_args()
 
-    llm_fn = make_llm_fn(args.model)
+    print(f"[Engram] Downloading/verifying {NEMOTRON_REPO} ...")
+    model_path = snapshot_download(repo_id=NEMOTRON_REPO)
+    print(f"[Engram] Model at: {model_path}")
+
+    llm_fn = make_llm_fn(model_path)
     agent  = EngramAgent(max_tokens=args.budget)
 
     if args.eval:
