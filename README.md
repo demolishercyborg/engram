@@ -1,6 +1,6 @@
 # Engram
 
-A local LLM with scored tiered memory. Runs entirely on-device via Ollama — no API keys, no cloud.
+A local LLM with scored tiered memory, powered by **NVIDIA Nemotron-Nano-9B-v2**. Runs entirely on-device — no API keys, no cloud.
 
 Instead of crashing when context gets too long, Engram automatically scores every chunk in the context window by **semantic relevance + recency + access frequency**, evicts the least important to a SQLite archival store, and recalls them on demand when the model needs them again.
 
@@ -10,12 +10,13 @@ Instead of crashing when context gets too long, Engram automatically scores ever
 
 | | MemGPT | Engram |
 |---|---|---|
+| Model | Any LLM | Nemotron-Nano-9B-v2 (local) |
 | Eviction strategy | FIFO (oldest out) | Scored (least relevant out) |
 | Retrieval trigger | LLM tool call | LLM tool call |
 | Retrieval method | Vector similarity | Vector similarity |
 | Failure tracking | None | Explicit — unrecalled chunks surfaced |
 | Evaluation | Domain-specific | Token efficiency + recall accuracy vs full-context baseline |
-| Runs locally | Partial | Fully local (Ollama + SQLite) |
+| Runs locally | Partial | Fully local (HuggingFace + SQLite) |
 
 The core insight: a semantically relevant 20-turn-old chunk should survive eviction over an irrelevant recent one. MemGPT doesn't do this. Engram does.
 
@@ -78,7 +79,7 @@ engram/
 ├── eval/
 │   └── evaluator.py         # recall accuracy, token savings, loss report
 ├── llm/
-│   └── ollama_client.py     # Ollama API wrapper
+│   └── nemotron_client.py   # Nemotron local inference via HuggingFace
 └── db/
     └── engram.db            # auto-created on first run
 ```
@@ -87,40 +88,30 @@ engram/
 
 ## Setup
 
-### 1. Install Ollama
+### 1. Install dependencies
 
 ```bash
-curl -fsSL https://ollama.ai/install.sh | sh
+pip install torch transformers accelerate huggingface_hub sentence-transformers numpy
 ```
 
-### 2. Pull a model
+### 2. Run
 
-Pick based on your VRAM:
-
-```bash
-ollama pull llama3.2          # 3B  — ~2GB  VRAM, fastest
-ollama pull qwen2.5:14b       # 14B — ~9GB  VRAM, good balance
-ollama pull qwen2.5:32b-q4    # 32B — ~20GB VRAM, best quality
-```
-
-### 3. Install dependencies
-
-```bash
-pip install sentence-transformers numpy requests
-```
-
-### 4. Run
+On first run, Engram downloads **nvidia/NVIDIA-Nemotron-Nano-9B-v2** to your HuggingFace cache (~18GB). Every subsequent run loads from disk — no network required.
 
 ```bash
 # Interactive chat
-python main.py --model qwen2.5:14b
+python main.py
 
 # Run eval suite then drop into chat
-python main.py --model qwen2.5:14b --eval
+python main.py --eval
 
 # Stress-test eviction with a tight budget
-python main.py --model qwen2.5:14b --budget 512 --eval
+python main.py --budget 512 --eval
 ```
+
+### Hardware
+
+Tested on **NVIDIA GX-10** (Grace-Blackwell). Requires a CUDA-capable GPU with ~18GB VRAM (bfloat16). CPU inference works but is slow.
 
 ---
 
@@ -129,9 +120,9 @@ python main.py --model qwen2.5:14b --budget 512 --eval
 Run with `--eval` to get a full report:
 
 ```
-══════════════════════════════════════════════════════════════
-  CUEMEM EVALUATION REPORT
-══════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
+  ENGRAM EVALUATION REPORT
+════════════════════════════════════════════════════════════
 
 ── Recall Accuracy ──────────────────────────
   ✓  Q: What is my name?
@@ -154,10 +145,10 @@ Run with `--eval` to get a full report:
 
   Mitigation: lower MAX_TOKENS budget, increase top_k on recall,
   or use archival_save for critical facts before eviction.
-══════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
 ```
 
-The failure mode report surfaces every chunk that was evicted but never recalled — an explicit acknowledgment of the core weakness in any memory system: **if the model fails to save something and never searches for it, it is gone.**
+The failure mode report surfaces every chunk evicted but never recalled — an explicit acknowledgment of the core weakness in any memory system: **if the model fails to save something and never searches for it, it is gone.**
 
 ---
 
@@ -172,12 +163,9 @@ The failure mode report surfaces every chunk that was evicted but never recalled
 
 ## Configuration
 
-All tunables are at the top of `main.py` and `core/scorer.py`:
-
 ```python
 # main.py
-DEFAULT_MODEL = "llama3.2"   # any ollama model
-MAX_TOKENS    = 2048          # working memory budget
+MAX_TOKENS = 2048   # working memory budget (lower = more aggressive eviction)
 
 # core/scorer.py
 W_SIM  = 0.60   # weight: semantic similarity
@@ -200,5 +188,5 @@ The model has two tools it can call at any time:
 ## Requirements
 
 - Python 3.10+
-- Ollama running locally
-- GPU recommended (CPU works, slower)
+- CUDA-capable GPU (~18GB VRAM for bfloat16)
+- `pip install torch transformers accelerate huggingface_hub sentence-transformers numpy`
