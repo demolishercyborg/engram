@@ -27,7 +27,7 @@ The core insight: a semantically relevant 20-turn-old chunk should survive evict
 ```
 ┌─────────────────────────────────────────────┐
 │                  main.py                    │
-│            CLI + eval harness               │
+│        CLI + eval harness + --viz           │
 └───────────────────┬─────────────────────────┘
                     │
 ┌───────────────────▼─────────────────────────┐
@@ -41,10 +41,10 @@ The core insight: a semantically relevant 20-turn-old chunk should survive evict
 │ scored eviction │   │    failure tracking    │
 └──────┬──────────┘   └────────────────────────┘
        │
-┌──────▼──────────┐
-│   scorer.py     │
-│ sim + rec + freq│
-└─────────────────┘
+┌──────▼──────────┐   ┌────────────────────────┐
+│   scorer.py     │   │   viz/memory_viz.py    │
+│ sim + rec + freq│   │  live terminal display │
+└─────────────────┘   └────────────────────────┘
 ```
 
 ---
@@ -67,7 +67,7 @@ Weights are tunable in `core/scorer.py`.
 
 ```
 engram/
-├── main.py                  # CLI entrypoint, --eval flag
+├── main.py                  # CLI entrypoint, --eval, --viz flags
 ├── requirements.txt
 ├── core/
 │   ├── agent.py             # orchestrates working memory + archival + LLM
@@ -80,6 +80,8 @@ engram/
 │   └── evaluator.py         # recall accuracy, token savings, loss report
 ├── llm/
 │   └── nemotron_client.py   # Nemotron local inference via HuggingFace
+├── viz/
+│   └── memory_viz.py        # live CLI memory visualizer
 └── db/
     └── engram.db            # auto-created on first run
 ```
@@ -91,7 +93,7 @@ engram/
 ### 1. Install dependencies
 
 ```bash
-pip install torch transformers accelerate huggingface_hub sentence-transformers numpy
+pip install torch transformers accelerate huggingface_hub sentence-transformers numpy rich
 ```
 
 ### 2. Run
@@ -102,16 +104,47 @@ On first run, Engram downloads **nvidia/NVIDIA-Nemotron-Nano-9B-v2** to your Hug
 # Interactive chat
 python main.py
 
+# Live memory visualization (recommended for demos)
+python main.py --viz
+
 # Run eval suite then drop into chat
 python main.py --eval
 
-# Stress-test eviction with a tight budget
-python main.py --budget 512 --eval
+# Stress-test eviction with visualization
+python main.py --viz --budget 512 --eval
 ```
 
 ### Hardware
 
 Tested on **NVIDIA GX-10** (Grace-Blackwell). Requires a CUDA-capable GPU with ~18GB VRAM (bfloat16). CPU inference works but is slow.
+
+---
+
+## Memory Visualizer
+
+Run with `--viz` to see a live view of working memory, evictions, and recalls before every turn:
+
+```
+─── Working Memory ─────────────────────────────────────────────────────────
+66/2048 tokens  [██░░░░░░░░░░░░░░░░░░░░░░]  5 chunks · archival 3 · recall 67%
+Score            Role  Content                                            Tok
+────────────────────────────────────────────────────────────────────────────
+── pinned ──     sys   You are Engram, an assistant with a tiered mem…    14
+████░░░░  0.50   usr   My name is Alex and I am a backend engineer…       13
+█████░░░  0.58   ast   Nice to meet you Alex!                              5
+█████░░░  0.64   usr   I have a recurring bug in our webhook dispatc…     19
+█████░░░  0.61   ast   That sounds like a race condition or queue…        15
+────────────────────────────────────────────────────────────────────────────
+
+  ↓ evict  [usr] "I have a recurring bug in our webhook dispatcher"   score 0.28
+  ↑ recall [usr] "I have a recurring bug in our webhook dispatcher"   ← 'webhook bug'
+  ⚡ tool   memory_search(query='webhook bug', top_k=3)   → Recalled 1 chunks.
+```
+
+- Score bars show each chunk's retention score relative to the current query
+- System prompt shows `── pinned ──` — it is never evicted
+- Token bar turns yellow above 70% capacity, red above 90%
+- Evictions, recalls, and tool calls print inline as they fire
 
 ---
 
@@ -152,7 +185,15 @@ The failure mode report surfaces every chunk evicted but never recalled — an e
 
 ---
 
-## CLI Commands
+## CLI Flags
+
+| Flag | Description |
+|---|---|
+| `--viz` | Enable live memory visualization |
+| `--eval` | Run recall eval suite before chat |
+| `--budget N` | Set working memory token budget (default: 2048) |
+
+## CLI Commands (during chat)
 
 | Command | Description |
 |---|---|
@@ -187,6 +228,6 @@ The model has two tools it can call at any time:
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.9+
 - CUDA-capable GPU (~18GB VRAM for bfloat16)
-- `pip install torch transformers accelerate huggingface_hub sentence-transformers numpy`
+- `pip install torch transformers accelerate huggingface_hub sentence-transformers numpy rich`
