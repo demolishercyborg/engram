@@ -1,3 +1,4 @@
+from __future__ import annotations
 import time
 import numpy as np
 from core.scorer import Scorer
@@ -43,8 +44,11 @@ class WorkingMemory:
         if not scored:
             return None
 
-        worst_idx = min(scored, key=lambda x: x[1])[0]
-        return self.chunks.pop(worst_idx)
+        worst_idx, worst_score = min(scored, key=lambda x: x[1])
+        evicted = self.chunks.pop(worst_idx)
+        if cb := getattr(self, "_viz_on_evict", None):
+            cb(evicted, worst_score)
+        return evicted
 
     def is_over_budget(self) -> bool:
         return self.total_tokens() > self.max_tokens

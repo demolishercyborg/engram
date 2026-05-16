@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Nemotron local inference client.
 Loads nvidia/NVIDIA-Nemotron-Nano-9B-v2 from a local snapshot_download path.

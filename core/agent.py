@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Engram Agent — orchestrates working memory, archival store, and the LLM.
 The LLM is an active participant: it decides when to call memory_search()
@@ -55,11 +56,12 @@ TOOLS = [
 
 
 class EngramAgent:
-    def __init__(self, max_tokens: int = 2048):
+    def __init__(self, max_tokens: int = 2048, viz=None):
         self.embedder = Embedder()
         self.scorer   = Scorer(self.embedder)
         self.working  = WorkingMemory(max_tokens, self.scorer, self.embedder)
         self.archival = ArchivalStore(self.embedder)
+        self.viz      = viz
 
         # system prompt is always at index 0 — protected from eviction
         self.working.add("system", SYSTEM_PROMPT)
@@ -68,6 +70,8 @@ class EngramAgent:
 
     def chat(self, user_input: str, llm_fn) -> str:
         query_vec = self.embedder.embed(user_input)
+        if self.viz:
+            self.viz.set_query(query_vec)
         self._add_and_evict("user", user_input, query_vec)
 
         for _ in range(6):
@@ -92,7 +96,10 @@ class EngramAgent:
                         args = {}
 
                 result = self._handle_tool(name, args, query_vec)
-                print(f"  [Tool] {name}({args}) → {str(result)[:100]}")
+                if self.viz:
+                    self.viz.log_tool(name, args, str(result))
+                else:
+                    print(f"  [Tool] {name}({args}) → {str(result)[:100]}")
                 self._add_and_evict("system", f"[Tool result — {name}]: {result}", query_vec)
 
         return "[Engram: max tool rounds reached]"

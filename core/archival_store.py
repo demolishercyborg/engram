@@ -92,6 +92,8 @@ class ArchivalStore:
                 (r["id"],)
             )
         self.conn.commit()
+        if cb := getattr(self, "_viz_on_recall", None):
+            cb(results, query)
         return results
 
     def unrecalled_chunks(self) -> list[dict]:

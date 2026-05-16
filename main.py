@@ -18,6 +18,7 @@ from huggingface_hub import snapshot_download
 from core.agent import EngramAgent
 from eval.evaluator import Evaluator
 from llm.nemotron_client import make_llm_fn
+from viz.memory_viz import MemoryViz
 
 
 # ── config ────────────────────────────────────────────────────────────────────
@@ -56,12 +57,18 @@ EVAL_PROBES = [
 
 
 def run_chat(agent: EngramAgent, llm_fn):
+    viz = agent.viz
     print(f"\n{'='*60}")
     print("  Engram — tiered memory LLM (Nemotron-Nano-9B-v2)")
     print(f"  Budget: {agent.working.max_tokens} tokens | type 'status' or 'quit'")
+    if viz:
+        print("  Memory visualization ON")
     print(f"{'='*60}\n")
 
     while True:
+        if viz:
+            viz.render()
+
         try:
             user_input = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -76,9 +83,11 @@ def run_chat(agent: EngramAgent, llm_fn):
             print(f"\n  {agent.status()}\n")
             continue
 
+        print()
         response = agent.chat(user_input, llm_fn)
         print(f"\nEngram: {response}")
-        print(f"  ↳ {agent.status()}\n")
+        if not viz:
+            print(f"  ↳ {agent.status()}\n")
 
 
 def run_eval(agent: EngramAgent, llm_fn):
@@ -107,14 +116,23 @@ def main():
                         help="Working memory token budget")
     parser.add_argument("--eval",   action="store_true",
                         help="Run eval suite before chat")
+    parser.add_argument("--viz",    action="store_true",
+                        help="Show live memory visualization")
     args = parser.parse_args()
+
+    viz = None
+    if args.viz:
+        viz = MemoryViz()
 
     print(f"[Engram] Downloading/verifying {NEMOTRON_REPO} ...")
     model_path = snapshot_download(repo_id=NEMOTRON_REPO)
     print(f"[Engram] Model at: {model_path}")
 
     llm_fn = make_llm_fn(model_path)
-    agent  = EngramAgent(max_tokens=args.budget)
+    agent  = EngramAgent(max_tokens=args.budget, viz=viz)
+
+    if viz:
+        viz.attach(agent)
 
     if args.eval:
         run_eval(agent, llm_fn)
