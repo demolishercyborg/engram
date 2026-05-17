@@ -7,6 +7,7 @@ Compatible with NVIDIA GX-10 (Grace-Blackwell, CUDA, bfloat16).
 
 import json
 import re
+import time
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -23,10 +24,10 @@ class NemotronClient:
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        print("[Nemotron] Loading model (bfloat16, device_map=auto) ...")
+        print("[Nemotron] Loading model (dtype=auto, device_map=auto) ...")
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
+            torch_dtype="auto",
             device_map="auto",
             trust_remote_code=True,
         )
@@ -52,9 +53,21 @@ class NemotronClient:
         response_text = self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
         tool_calls = _parse_tool_calls(response_text)
+        if tool_calls:
+            # Strip the call markup so the assistant's content carries only
+            # any free-form reasoning the model emitted alongside the call.
+            content = _strip_tool_call_markup(response_text)
+            # Stamp ids so downstream tool result messages can reference them.
+            base = int(time.time() * 1000)
+            for i, tc in enumerate(tool_calls):
+                tc.setdefault("id", f"call_{base}_{i}")
+                tc.setdefault("type", "function")
+        else:
+            content = response_text
+
         return {
             "message": {
-                "content":    "" if tool_calls else response_text,
+                "content":    content,
                 "tool_calls": tool_calls,
             }
         }
@@ -97,45 +110,79 @@ class NemotronClient:
             else:
                 msgs.insert(0, {"role": "system", "content": header})
 
+        # Nemotron-H uses <SPECIAL_10> System / <SPECIAL_11> User/Assistant / <SPECIAL_12> EOS
+        _role_token = {"system": "<SPECIAL_10>", "user": "<SPECIAL_11>", "assistant": "<SPECIAL_11>"}
         parts = []
         for m in msgs:
-            role    = m["role"].capitalize()
+            role    = m["role"].lower()
+            token   = _role_token.get(role, "<SPECIAL_11>")
+            label   = role.capitalize()
             content = m["content"]
-            parts.append(f"<|im_start|>{role}\n{content}<|im_end|>")
-        parts.append("<|im_start|>Assistant\n")
+            parts.append(f"{token}{label}\n{content}\n<SPECIAL_12>")
+        parts.append("<SPECIAL_11>Assistant\n")
         return "\n".join(parts)
 
 
+_TOOL_CALL_MARKUP_PATTERNS = [
+    re.compile(r"<TOOLCALL>.*?</TOOLCALL>", re.DOTALL),
+    re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL),
+    re.compile(r"```(?:json)?\s*\{[^`]*\"name\"\s*:[^`]*\}\s*```", re.DOTALL),
+]
+
+
+def _strip_tool_call_markup(text: str) -> str:
+    for pat in _TOOL_CALL_MARKUP_PATTERNS:
+        text = pat.sub("", text)
+    return text.strip()
+
+
 def _parse_tool_calls(text: str) -> list[dict]:
-    """Extract tool calls from Nemotron/Qwen-style <tool_call>...</tool_call> output."""
-    patterns = [
-        r"<tool_call>\s*(\{.*?\})\s*</tool_call>",   # Qwen / Nemotron standard
-        r"```(?:json)?\s*(\{[^`]*\"name\"\s*:[^`]*\})\s*```",  # markdown code block
-    ]
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.DOTALL)
-        if not matches:
-            continue
-        result = []
-        for m in matches:
+    """Extract tool calls from model output, supporting multiple formats."""
+
+    def _normalise(data: dict) -> dict:
+        args = data.get("arguments", data.get("parameters", {}))
+        if isinstance(args, str):
             try:
-                data = json.loads(m)
-                args = data.get("arguments", data.get("parameters", {}))
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {}
-                result.append({
-                    "function": {
-                        "name":      data.get("name", ""),
-                        "arguments": args,
-                    }
-                })
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        return {"function": {"name": data.get("name", ""), "arguments": args}}
+
+    # Nemotron format: <TOOLCALL>[{...}, ...]</TOOLCALL>  (JSON array)
+    m = re.search(r"<TOOLCALL>\s*(\[.*?\])\s*</TOOLCALL>", text, re.DOTALL)
+    if m:
+        try:
+            calls = json.loads(m.group(1))
+            result = [_normalise(c) for c in calls if isinstance(c, dict)]
+            if result:
+                return result
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Qwen format: <tool_call>{...}</tool_call>  (one object per tag)
+    single_matches = re.findall(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL)
+    if single_matches:
+        result = []
+        for raw in single_matches:
+            try:
+                result.append(_normalise(json.loads(raw)))
             except (json.JSONDecodeError, KeyError):
                 pass
         if result:
             return result
+
+    # Markdown JSON code block fallback
+    block_matches = re.findall(r"```(?:json)?\s*(\{[^`]*\"name\"\s*:[^`]*\})\s*```", text, re.DOTALL)
+    if block_matches:
+        result = []
+        for raw in block_matches:
+            try:
+                result.append(_normalise(json.loads(raw)))
+            except (json.JSONDecodeError, KeyError):
+                pass
+        if result:
+            return result
+
     return []
 
 

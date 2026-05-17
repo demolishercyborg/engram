@@ -93,7 +93,8 @@ engram/
 ### 1. Install dependencies
 
 ```bash
-pip install torch transformers accelerate huggingface_hub sentence-transformers numpy rich
+pip3 install ninja packaging
+pip3 install -r requirements.txt --no-build-isolation
 ```
 
 ### 2. Run
@@ -150,38 +151,36 @@ Score            Role  Content                                            Tok
 
 ## Evaluation
 
-Run with `--eval` to get a full report:
+Run with `--eval` to get a full report. The eval suite is a deliberately small, deterministic harness designed to answer one question: **does the tiered memory actually preserve the facts a user mentioned earlier, even after eviction?**
 
+### What the suite does
+
+1. **Seeds** 17 short conversational turns into working memory (`SEED_FACTS` in `main.py`). These look like a real chat — the user introduces themselves, mentions where they work, languages they use, an ongoing bug, their dog's name, plus a handful of unrelated trivia questions to add noise.
+2. After every seed turn, `WorkingMemory.is_over_budget()` is checked. If the budget is exceeded, the lowest-scored chunk is evicted to the SQLite archival store. With the default `--budget 2048` the seed fits in working memory; with `--budget 256` you force aggressive eviction and the model has to call `memory_search` to recover facts.
+3. **Probes** 5 questions (`EVAL_PROBES`) that target facts buried in the seed: name, employer, languages, current bug, dog's name. Each probe goes through the normal `agent.chat()` loop, so the model decides on its own whether to call `memory_search` or answer directly.
+
+### What gets measured
+
+| Section | How it's computed | What it tells you |
+|---|---|---|
+| **Recall Accuracy** | Case-insensitive substring match of the expected keyword in the model's answer (`evaluator.py:80`) | Did the agent recover the fact at all? |
+| **Latency** | Wall-clock time per probe | Cost of memory recall vs. direct answer |
+| **Working memory used** | `WorkingMemory.total_tokens()` after probes finish | What the model was actually paying for in context |
+| **Full-context baseline** | `working_memory + sum(len(c)//4 for c in archival)` | What a non-tiered system would have shipped to the LLM every turn |
+| **Token savings** | `baseline − working_memory_used` | The whole point: how much context the tiering saved |
+| **Recall rate** | `recalled_chunks / total_archival_chunks` | Of everything that got evicted, how much did the model later ask back? |
+| **Unrecalled chunks** | Archival rows with `recalled = 0` | **The failure mode** — facts the model lost forever because it never searched for them |
+
+The failure-mode report is the part most memory systems hide. It surfaces every chunk evicted but never recalled — an explicit acknowledgment of the core weakness in any tiered memory: **if the model fails to save something and never searches for it, it is gone.**
+
+### Caveat on the default budget
+
+At `--budget 2048` the 17 seed facts fit comfortably (~334 tokens) so nothing gets evicted and the model answers from context directly. To actually exercise the archival/recall path end-to-end, drop the budget:
+
+```bash
+python main.py --eval --budget 256        # forces eviction + tool calls
+python main.py --eval --budget 256 --viz  # plus live visualization of every eviction/recall
 ```
-════════════════════════════════════════════════════════════
-  ENGRAM EVALUATION REPORT
-════════════════════════════════════════════════════════════
-
-── Recall Accuracy ──────────────────────────
-  ✓  Q: What is my name?
-       Expected: 'Alex' | Got: 'Your name is Alex.'
-  ✓  Q: Where do I work?
-       Expected: 'Stripe' | Got: 'You work at Stripe.'
-  ✗  Q: What bug am I dealing with?
-       Expected: 'webhook' | Got: 'I don't have that in context...'
-
-  Accuracy: 4/5 (80%)
-
-── Token Efficiency ─────────────────────────
-  Working memory used  : 312 tokens
-  Full-context baseline: 1840 tokens
-  Token savings        : 1528 (83%)
-
-── Failure Mode: Unrecalled Chunks ──────────
-  WARNING: 1 chunk(s) evicted and NEVER recalled.
-  • [user] I have a recurring bug in our webhook dispatcher...
-
-  Mitigation: lower MAX_TOKENS budget, increase top_k on recall,
-  or use archival_save for critical facts before eviction.
-════════════════════════════════════════════════════════════
-```
-
-The failure mode report surfaces every chunk evicted but never recalled — an explicit acknowledgment of the core weakness in any memory system: **if the model fails to save something and never searches for it, it is gone.**
 
 ---
 
@@ -220,9 +219,21 @@ W_FREQ = 0.10   # weight: access frequency
 
 The model has two tools it can call at any time:
 
-**`memory_search(query, top_k)`** — searches archival store via vector similarity, injects results back into working memory.
+**`memory_search(query, top_k)`** — searches archival store via vector similarity, returns the recalled content as a `tool` message and re-injects the chunks into working memory so the next turn keeps them in context.
 
 **`archival_save(content)`** — explicitly saves a fact to archival before it gets evicted.
+
+### Conversation threading
+
+Tool calls are recorded in working memory using the standard OpenAI-style three-message pattern:
+
+```
+assistant  { content: "...", tool_calls: [{ id, function: { name, arguments } }] }
+tool       { content: "<result>", tool_call_id: <id>, name: <tool_name> }
+assistant  { content: "<final answer>" }
+```
+
+This matters because `tokenizer.apply_chat_template` (the path Nemotron-Nano-9B-v2 uses) expects this exact threading. Earlier iterations recorded only the tool *results* (as bare `system` messages) and dropped the assistant's tool-call turn on the floor — the model then saw orphan tool results with no originating request, which broke the template and caused it to re-issue the same tool call in a loop. The agent now writes the assistant turn (with `tool_calls` metadata) before processing results, and any chunks pulled back from archival are re-inserted *after* the matching `tool` message so the assistant→tool pair stays adjacent.
 
 ---
 
