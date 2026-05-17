@@ -1,0 +1,61 @@
+[Engram] Downloading/verifying nvidia/NVIDIA-Nemotron-Nano-9B-v2 ...
+Fetching 22 files:   0%|          | 0/22 [00:00<?, ?it/s]Fetching 22 files: 100%|██████████| 22/22 [00:00<00:00, 130700.69it/s]
+[Engram] Model at: /home/asus/.cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-Nano-9B-v2/snapshots/6533e8de2c68e4536bf7c411d7a3ce5734111476
+[Nemotron] Loading tokenizer from /home/asus/.cache/huggingface/hub/models--nvidia--NVIDIA-Nemotron-Nano-9B-v2/snapshots/6533e8de2c68e4536bf7c411d7a3ce5734111476 ...
+[Nemotron] Loading model (dtype=auto, device_map=auto) ...
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:34<01:44, 34.99s/it]Loading checkpoint shards:  50%|█████     | 2/4 [01:10<01:10, 35.42s/it]Loading checkpoint shards:  75%|███████▌  | 3/4 [01:47<00:36, 36.01s/it]Loading checkpoint shards: 100%|██████████| 4/4 [02:10<00:00, 30.96s/it]Loading checkpoint shards: 100%|██████████| 4/4 [02:10<00:00, 32.66s/it]
+NemotronH requires an initialized `NemotronHHybridDynamicCache` to return a cache. None was provided, so no cache will be returned.
+[Nemotron] Ready on cuda:0.
+[Embedder] Loading all-MiniLM-L6-v2 on cuda ...
+[Embedder] Ready (semantic mode).
+
+[Eval] Seeding facts into memory...
+[Eval] 17 facts seeded. Status: 334/2048 tokens | 18 chunks in context | Archival: 1 chunks | Recall rate: 100%
+[Eval] Running probes...
+
+
+============================================================
+  ENGRAM EVALUATION REPORT
+============================================================
+
+── Recall Accuracy ──────────────────────────
+  ✓  Q: What is my name?
+       Expected: 'Alex' | Got: 'Okay, the user asked, "What is my name?" Let me check the co'
+       Latency: 36237ms
+  ✓  Q: Where do I work?
+       Expected: 'Stripe' | Got: 'Okay, the user asked, "Where do I work?" Let me check the co'
+       Latency: 27898ms
+  ✓  Q: What programming languages do I use?
+       Expected: 'Go' | Got: 'Okay, the user asked, "What programming languages do I use?"'
+       Latency: 23304ms
+  ✓  Q: What bug am I dealing with?
+       Expected: 'webhook' | Got: 'Okay, the user is asking about the bug they're dealing with.'
+       Latency: 55741ms
+  ✓  Q: What is my dog's name?
+       Expected: 'Biscuit' | Got: 'Okay, the user asked, "What is my dog's name?" Let me check '
+       Latency: 36151ms
+
+  Accuracy: 5/5 (100%)
+
+── Token Efficiency ─────────────────────────
+  Working memory used  : 1205 tokens
+  Full-context baseline: 1209 tokens
+  Token savings        : 4 (0%)
+
+── Archival Stats ───────────────────────────
+  Chunks in archival   : 1
+  Recall rate          : 100%
+  Loss rate            : 0%
+
+── Failure Mode: Unrecalled Chunks ──────────
+  None — all evicted chunks were recalled ✓
+============================================================
+
+
+============================================================
+  Engram — tiered memory LLM (Nemotron-Nano-9B-v2)
+  Budget: 2048 tokens | type 'status' or 'quit'
+============================================================
+
+You: 
+Bye.

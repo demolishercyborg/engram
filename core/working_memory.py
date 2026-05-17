@@ -16,16 +16,25 @@ class WorkingMemory:
         self.embedder = embedder
         self.chunks: list[dict] = []
 
-    def add(self, role: str, content: str):
-        emb = self.embedder.embed(content)
-        self.chunks.append({
+    def add(self, role: str, content: str, **extra):
+        # Embed a synthetic string when content is empty (e.g. an assistant
+        # turn that is purely a tool call) so the chunk still has a usable
+        # vector for scoring/eviction.
+        embed_text = content or extra.get("_embed_hint", "")
+        emb = self.embedder.embed(embed_text)
+        chunk = {
             "role":         role,
             "content":      content,
             "embedding":    emb,
             "timestamp":    time.time(),
             "access_count": 0,
             "tokens":       _approx_tokens(content),
-        })
+        }
+        for k, v in extra.items():
+            if k.startswith("_"):
+                continue
+            chunk[k] = v
+        self.chunks.append(chunk)
 
     def evict_one(self, query_vec: np.ndarray | None = None) -> dict | None:
         """Remove and return the lowest-scored chunk.
@@ -57,9 +66,18 @@ class WorkingMemory:
         return sum(c["tokens"] for c in self.chunks)
 
     def to_messages(self) -> list[dict]:
+        msgs = []
         for c in self.chunks:
             c["access_count"] += 1
-        return [{"role": c["role"], "content": c["content"]} for c in self.chunks]
+            m = {"role": c["role"], "content": c["content"]}
+            if "tool_calls" in c:
+                m["tool_calls"] = c["tool_calls"]
+            if "tool_call_id" in c:
+                m["tool_call_id"] = c["tool_call_id"]
+            if "name" in c:
+                m["name"] = c["name"]
+            msgs.append(m)
+        return msgs
 
     def status(self) -> str:
         return f"{self.total_tokens()}/{self.max_tokens} tokens | {len(self.chunks)} chunks in context"
